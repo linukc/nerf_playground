@@ -6,7 +6,7 @@ Run:
 ```python
 python3 -m venv venv  
 pip3 install requirements.txt
-python3 train.py -m <path_to_scene in blender dataset> (check config before)
+python3 train.py -m dataset.path=<path_to_scene in blender dataset> (check config before)
 ```
 https://dtransposed.github.io/blog/2022/08/06/NeRF/
 https://hmn.wiki/nn/Rendering_equation
