@@ -5,12 +5,13 @@ import mcubes #pylint: disable=import-error
 from torch import nn
 from omegaconf import DictConfig
 
-from nerf_mlp import NeRFMLP
-from encoding import HighFreqEncoding
-from volume_render import VolumeRenderer
-from points_sampler import IntervalSampler
-from points_sampler import HierarchicalPDFSampler
-from points_sampler import intervals_to_ray_points
+#pylint: disable=import-error
+from model.nerf_mlp import NeRFMLP
+from model.encoding import HighFreqEncoding
+from model.volume_render import VolumeRenderer
+from model.points_sampler import IntervalSampler
+from model.points_sampler import HierarchicalPDFSampler
+from model.points_sampler import intervals_to_ray_points
 
 
 class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
