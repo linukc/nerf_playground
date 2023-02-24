@@ -6,3 +6,4 @@ experiments/
 *__pycache__*
 .pre-commit-config.yaml
 .vscode/
+multirun/
