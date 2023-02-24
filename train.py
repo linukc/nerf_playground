@@ -150,9 +150,10 @@ def main(cfg: DictConfig) -> None:
 
     setup_loguru_level(cfg.logger.level)
 
-    if cfg.git.check_uncommited and have_uncommitted_changes():
-        logger.critical("Commit your changes to set proper hash in wandb config.")
-        sys.exit()
+    if cfg.git.check_uncommited:
+        if have_uncommitted_changes():
+            logger.critical("Commit your changes to set proper hash in wandb config.")
+            sys.exit()
     else:
         logger.warning("Ignore files in git stage area and use last commit in wandb config!")
 
