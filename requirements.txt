@@ -1,0 +1,11 @@
+numpy
+torch==1.13.1
+torchvision==0.14.1
+wandb
+einops
+hydra-core
+PyMCubes
+trimesh
+pyglet==1.5.27
+torchmetrics
+lpips

@@ -1,0 +1,8 @@
+venv/
+wandb/
+eval/
+checkpoints/
+experiments/
+*__pycache__*
+.pre-commit-config.yaml
+.vscode/
