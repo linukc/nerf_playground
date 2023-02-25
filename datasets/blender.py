@@ -45,6 +45,7 @@ class BlenderDataset(Dataset):
         self._test_rays = []
         self._test_pixels = []
         self._test_depth_values = []
+        self.test_num = None
 
         self.transform = transforms.ToTensor()
         self.read_metadata()
@@ -134,6 +135,7 @@ class BlenderDataset(Dataset):
 
     def _read_test_data(self):
         """Fills self.rays and self.pixels arrays."""
+        self.test_num = len(self.meta["frames"])
 
         frames = self.meta["frames"][::self.test_each]
         for frame in tqdm(frames):
