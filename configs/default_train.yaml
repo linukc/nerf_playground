@@ -44,7 +44,7 @@ model:
   use_fine_mlp: True
 
   encoding:
-    use: False
+    use: True
     num_freqs_coords: 10
     num_freqs_viewdir: 4
 

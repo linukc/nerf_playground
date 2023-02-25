@@ -3,6 +3,7 @@
 import torch
 import mcubes #pylint: disable=import-error
 from torch import nn
+from loguru import logger
 from omegaconf import DictConfig
 
 #pylint: disable=import-error
@@ -28,10 +29,14 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
         if cfg.model.encoding.use:
             self.coords_encoding = HighFreqEncoding(cfg.model.encoding.num_freqs_coords)
             self.viewdir_encoding = HighFreqEncoding(cfg.model.encoding.num_freqs_viewdir)
+        else:
+            logger.warning("Skip encoding!")
 
         self.mlp_coarse = NeRFMLP(cfg.model)
         if cfg.model.use_fine_mlp:
             self.mlp_fine = NeRFMLP(cfg.model)
+        else:
+            logger.warning("Skip fine_mlp!")
 
         self.interval_sampler = IntervalSampler(**cfg.model.interval_sampler)
         self.hsampler = HierarchicalPDFSampler(**cfg.model.hierarchical_sampler)
@@ -180,6 +185,6 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
         return vertices / sample_resolution - .5, triangles
 
     def _forward_sigma(self, points):
-        if self.cfg.use_fine_mlp:
+        if self.cfg.model.use_fine_mlp:
             return self.mlp_fine(xyz=self.coords_encoding(points))
         return self.mlp_coarse(xyz=self.coords_encoding(points))

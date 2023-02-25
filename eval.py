@@ -7,19 +7,18 @@ from model.nerf_model import NeRFModel
 
 
 #pylint: disable = no-value-for-parameter
-@hydra.main(version_base=None, config_path="configs", config_name="default")
+@hydra.main(version_base=None, config_path="configs", config_name="default_train")
 def main(cfg) -> None:
     """ Entrypoint function."""
 
-    model = NeRFModel(**cfg.model).to(cfg.device)
-    model.eval_mode()
+    nerf_model = NeRFModel(cfg).to(cfg.training.device)
+    nerf_model.eval()
 
-    checkpoint_dict = torch.load('checkpoints/checkpoint_i0_s1000.pth', map_location=cfg.device)
-    model.load_state(checkpoint_dict=checkpoint_dict)
+    checkpoint_dict = torch.load('latest.pth',
+        map_location=cfg.training.device)
+    nerf_model.load_state(checkpoint_dict=checkpoint_dict)
 
-    vertices, triangles = model.extract_mesh(
-        out_dir='meshs',
-        mesh_name='test',
+    vertices, triangles = nerf_model.extract_mesh(
         iso_level=32,
         sample_resolution=128,
         limit=1.2
