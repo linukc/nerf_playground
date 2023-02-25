@@ -21,8 +21,8 @@ class NeRFMLP(nn.Module):
         base_features_size = cfg_model.mlp.base_features_size
 
         if cfg_model.encoding.use:
-            in_features_location = cfg_model.encoding.num_freqs_coords * 3 * 2
-            in_features_direction = cfg_model.encoding.num_freqs_viewdir * 3 * 2
+            in_features_location = cfg_model.encoding.num_freqs_coords * 3 * 2 + 3
+            in_features_direction = cfg_model.encoding.num_freqs_viewdir * 3 * 2 + 3
         else:
             in_features_location = 3
             in_features_direction = 3
