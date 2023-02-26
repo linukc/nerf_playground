@@ -30,7 +30,7 @@ dataloader:
     shuffle: True
     num_workers: 4
     pin_memory: True
-    batch_size: 1900 # number of rays penetrating the model
+    batch_size: 1800 # number of rays penetrating the model
     persistent_workers: True # uncomment if num_workers > 0
 
   val:
@@ -73,7 +73,7 @@ training:
   exp_folder: "experiments"
   seed: 2023
   device: "cuda"
-  num_iterations: 300_000
+  num_iterations: 350_000
   eval_each: 5_000
 
   loss:
