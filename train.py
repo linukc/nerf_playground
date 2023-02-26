@@ -100,7 +100,7 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
             coarse_bundle, fine_bundle = nerf_model(rays)
             end_time.record()
             torch.cuda.synchronize()
-            time = start_time.elapsed_time(end_time)
+            elapsed_time = start_time.elapsed_time(end_time)
 
             if not fine_bundle:
                 loss_value = loss(coarse_bundle['rgb_map'], pixels)
@@ -114,13 +114,13 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
             optimizer.step()
             scheduler.step()
 
-            pbar.set_postfix({"loss": loss_value.item(), "f+b_per_step(ms)": time})
+            pbar.set_postfix({"loss": loss_value.item(), "f+b_per_step(ms)": elapsed_time})
             pbar.update()
 
             if cfg.wandb.use and (step % cfg.wandb.log_each == 0 or step == 1):
                 wandb.log({"loss": loss_value.item(),
                            "lr": scheduler.get_last_lr()[0],
-                           "f+b_per_step(ms)": time,
+                           "f+b_per_step(ms)": elapsed_time,
                            "step": step})
 
             if step % cfg.training.eval_each == 0:
