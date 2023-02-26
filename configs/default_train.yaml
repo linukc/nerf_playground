@@ -30,14 +30,14 @@ dataloader:
     shuffle: True
     num_workers: 4
     pin_memory: True
-    batch_size: 1500 # number of rays penetrating the model
+    batch_size: 2000 # number of rays penetrating the model
     persistent_workers: True # uncomment if num_workers > 0
 
   val:
     shuffle: False
     num_workers: 4
     pin_memory: True
-    batch_size: 7500 # number of rays penetrating the model
+    batch_size: 8000 # number of rays penetrating the model
     persistent_workers: True # uncomment if num_workers > 0
 
 model:
