@@ -7,3 +7,4 @@ experiments/
 .pre-commit-config.yaml
 .vscode/
 multirun/
+*pretrained*

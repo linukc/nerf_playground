@@ -93,15 +93,16 @@ class HierarchicalPDFSampler(torch.nn.Module):
         num_fine_samples (int): Number of depth samples per ray for the fine network.
     """
 
-    def __init__(self, num_fine_samples: int):
+    def __init__(self, num_fine_samples: int, perturb: bool):
         super().__init__()
 
         self.num_fine_samples = num_fine_samples
+        self.perturb = perturb
         uniform_x = torch.linspace(0.0, 1.0, steps=self.num_fine_samples,
             requires_grad = False, dtype=torch.float32)
         self.register_buffer("uniform_x", uniform_x, persistent=False)
 
-    def forward(self, depth_rays_values_coarse, coarse_weights, perturb=True):
+    def forward(self, depth_rays_values_coarse, coarse_weights):
         """
             Inputs:
                 depth_rays_values_coarse: (ray_count, num_coarse_samples])
@@ -119,7 +120,7 @@ class HierarchicalPDFSampler(torch.nn.Module):
         interval_samples = self.sample_pdf(points_on_rays_mid,
                                 coarse_weights[..., 1:-1],
                                 self.uniform_x,
-                                perturb=perturb).detach()
+                                perturb=self.perturb).detach()
 
         depth_values_fine, _ = torch.sort(torch.cat((depth_rays_values_coarse,
                                                      interval_samples), dim=-1),

@@ -11,6 +11,7 @@ import numpy as np
 from tqdm import tqdm
 from loguru import logger
 from einops import rearrange
+#pylint: disable=import-error
 import torchvision.utils as tvn
 from omegaconf import DictConfig
 #pylint: disable=import-error
@@ -157,8 +158,10 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
     tvn.save_image(tensor=torch.cat((pred_pixels, gt_pixels), dim=0),
         fp=f"{path}/images/images_{step}.png", nrow=8)
     os.makedirs(os.path.join(path, "depth"), exist_ok=True)
-    tvn.save_image(tensor=torch.cat((norm_image(pred_depth), norm_image(gt_depth)), dim=0),
-        fp=f"{path}/depth/depth_{step}.png", nrow=8)
+    tvn.save_image(tensor=torch.cat((norm_image(pred_depth),
+                                     norm_image(gt_depth)),
+                            dim=0),
+                        fp=f"{path}/depth/depth_{step}.png", nrow=8)
     #tvn.save_image(tensor=pred_disp, fp=f"{path}/disp_{step}.png", nrow=8)
     os.makedirs(os.path.join(path, "acc_map"), exist_ok=True)
     tvn.save_image(tensor=norm_image(pred_accmap), fp=f"{path}/acc_map/acc_map_{step}.png", nrow=8)

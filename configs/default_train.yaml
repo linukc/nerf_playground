@@ -12,7 +12,7 @@ logger:
   level: INFO # look at loguru.logger levels to manage output messages
 
 git: # prevent training with uncommited changes
-  check_uncommited: True
+  check_uncommited: False
 
 wandb:
   use: True
@@ -30,14 +30,14 @@ dataloader:
     shuffle: True
     num_workers: 4
     pin_memory: True
-    batch_size: 1800 # number of rays penetrating the model
+    batch_size: 1024 # number of rays penetrating the model
     persistent_workers: True # uncomment if num_workers > 0
 
   val:
     shuffle: False
     num_workers: 4
     pin_memory: True
-    batch_size: 6000 # number of rays penetrating the model
+    batch_size: 8000 # number of rays penetrating the model
     persistent_workers: True # uncomment if num_workers > 0
 
 model:
@@ -56,15 +56,16 @@ model:
   interval_sampler:
     near_bound: 2.0 # integral bound, section 4 formula 1
     far_bound: 6.0 # integral bound, section 4 formula 1
-    perturb: True # whether to add random offset to interval for sampling points along ray
+    perturb: False # whether to add random offset to interval for sampling points along ray
     lindisp: False # sampling linearly in disparity rather than depth, using in LLFF dataset
     num_samples_coarse: 64
 
   hierarchical_sampler:
     num_fine_samples: 128
+    perturb: False
 
   volume_renderer:
-    train_radiance_field_noise_std: 0.2
+    train_radiance_field_noise_std: 0.0
     val_radiance_field_noise_std: 0.0
     white_background: True # will shift points with low accuracy to the 1(white) pixel value
     attenuation_threshold: 1e-3
@@ -73,7 +74,7 @@ training:
   exp_folder: "experiments"
   seed: 2023
   device: "cuda"
-  num_iterations: 350_000
+  num_iterations: 500_000
   eval_each: 5_000
 
   loss:

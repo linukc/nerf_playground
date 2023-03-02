@@ -9,3 +9,5 @@ trimesh
 pyglet==1.5.27
 torchmetrics
 lpips
+loguru
+matplotlib

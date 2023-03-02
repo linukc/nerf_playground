@@ -73,8 +73,7 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
                 ray_depth_values = self.interval_sampler(ray_count=num_rays)
             elif renderer == "fine":
                 ray_depth_values = self.hsampler(ray_depth_values,
-                                                 coarse_bundle['weights'], #pylint: disable=unsubscriptable-object
-                                                 perturb=self.interval_sampler.perturb)
+                                                 coarse_bundle['weights']) #pylint: disable=unsubscriptable-object
 
             # [num_rays, self.num_coarse_samples]
             ray_points = intervals_to_ray_points(

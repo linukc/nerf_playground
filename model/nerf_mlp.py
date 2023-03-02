@@ -39,7 +39,15 @@ class NeRFMLP(nn.Module):
                     torch.nn.Linear(in_features_location,
                                     base_features_size),
                     torch.nn.ReLU())
-            elif i in self.skip_connection_layers:
+            # because i append input mlp layer in the ModuleList
+            # i treat fourth skip connection layer
+            # from the paper as fifth in the ModuleList
+            # check original implementation here
+            # https://github.com/yenchenlin/nerf-pytorch
+            # run_nerf_helpers.py#L79
+            # same i - 1 you can see in the forward function
+
+            elif i - 1 in self.skip_connection_layers:
                 self.mlp_base[i] = nn.Sequential(
                     torch.nn.Linear(base_features_size + in_features_location,
                                     base_features_size),
@@ -48,10 +56,9 @@ class NeRFMLP(nn.Module):
         self.density = torch.nn.Linear(base_features_size, 1)
         self.dense_mlp = torch.nn.Linear(base_features_size, base_features_size)
         self.color = nn.Sequential(
-            torch.nn.Linear(base_features_size+in_features_direction, base_features_size//2),
+            torch.nn.Linear(base_features_size + in_features_direction, base_features_size // 2),
             torch.nn.ReLU(),
-            torch.nn.Linear(base_features_size//2, 3),
-            torch.nn.Sigmoid())
+            torch.nn.Linear(base_features_size // 2, 3))
 
     def forward(self, xyz: torch.Tensor, viewdirs: torch.Tensor=None):
         """MLP forward propogation function.
@@ -75,7 +82,7 @@ class NeRFMLP(nn.Module):
 
         input_xyz = xyz
         for i, layer in enumerate(self.mlp_base):
-            if i in self.skip_connection_layers:
+            if i - 1 in self.skip_connection_layers:
                 xyz = torch.cat((input_xyz, xyz), dim=-1)
             xyz = layer(xyz)
 

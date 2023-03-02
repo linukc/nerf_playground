@@ -110,7 +110,7 @@ class VolumeRenderer(torch.nn.Module):
         deltas = deltas * ray_directions[..., None, :].norm(p=2, dim=-1)  # (N_rays, N_samples_)
 
         # Extract RGB of each sample position along each ray.
-        rgb = radiance_field[..., :3]
+        rgb = torch.sigmoid(radiance_field[..., :3])
 
         # Add noise to model's predictions for density. Can be used to
         # regularize network during training (prevents floater artifacts).

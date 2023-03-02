@@ -72,6 +72,7 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
         exp_name = wandb.run.name
     makedirs(osp(cfg.training.exp_folder, exp_name))
     mkdir(osp(cfg.training.exp_folder, exp_name, "checkpoints"))
+    OmegaConf.save(cfg, osp(cfg.training.exp_folder, exp_name, "config.yaml"))
 
     nerf_model = NeRFModel(cfg)
     loss, optimizer, scheduler = make_objects(cfg,
