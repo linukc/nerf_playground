@@ -12,7 +12,7 @@ logger:
   level: INFO # look at loguru.logger levels to manage output messages
 
 git: # prevent training with uncommited changes
-  check_uncommited: False
+  check_uncommited: True
 
 wandb:
   use: True
