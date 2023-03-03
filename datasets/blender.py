@@ -9,7 +9,7 @@ from PIL import Image
 from tqdm import tqdm
 from loguru import logger
 from einops import rearrange
-from torchvision import transforms
+from torchvision import transforms #pylint: disable=import-error
 from torch.utils.data import Dataset
 
 
@@ -137,6 +137,16 @@ class BlenderDataset(Dataset):
         """Fills self.rays and self.pixels arrays."""
         self.test_num = len(self.meta["frames"])
 
+        split_name = self.path.split("/")[-1]
+        depth_index = {"lego": "0001",
+                       "chair": "0000",
+                       "drums": "0001",
+                       "ficus": "0136",
+                       "hotdog": "0029",
+                       "materials": "0000",
+                       "mic": "0186",
+                       "ship": "0002"}
+
         frames = self.meta["frames"][::self.test_each]
         for frame in tqdm(frames):
             camera_to_world = torch.FloatTensor(frame["transform_matrix"])[:3, :4]
@@ -145,9 +155,10 @@ class BlenderDataset(Dataset):
             self._test_rays.append(rays) # h*w 6
             self._test_pixels.append(img) # h*w 3
 
+            depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
             depth_image = Image.open(
-                os.path.join(self.path, f"{frame['file_path']}_depth_0001.png")).resize(
-                    (self.image_size,) * 2, Image.LANCZOS)
+                os.path.join(self.path, depth_path).resize(
+                    (self.image_size,) * 2, Image.LANCZOS))
             depth_values = np.array(depth_image)[:, :, 0] # ~ 170 max value, looks like cm
             depth_values = self.transform(depth_values)
             depth_values = rearrange(depth_values, 'c h w -> (h w) c')
