@@ -5,7 +5,9 @@ from einops import rearrange
 
 class HighFreqEncoding(torch.nn.Module):
     """Defines a function that embeds
-    (p) = (sin(πp2^0), cos(πp2^0), · · · , sin(πp2^(L-1)), cos(πp2^(L-1)))"""
+    (p) = (sin(p2^0), cos(p2^0), · · · , sin(p2^(L-1)), cos(p2^(L-1)))
+    Comment abount pi missing: https://github.com/bmild/nerf/issues/12
+    """
 
     def __init__(self, num_freqs):
         super().__init__()
