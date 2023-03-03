@@ -157,8 +157,8 @@ class BlenderDataset(Dataset):
 
             depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
             depth_image = Image.open(
-                os.path.join(self.path, depth_path).resize(
-                    (self.image_size,) * 2, Image.LANCZOS))
+                os.path.join(self.path, depth_path)).resize(
+                    (self.image_size,) * 2, Image.LANCZOS)
             depth_values = np.array(depth_image)[:, :, 0] # ~ 170 max value, looks like cm
             depth_values = self.transform(depth_values)
             depth_values = rearrange(depth_values, 'c h w -> (h w) c')
