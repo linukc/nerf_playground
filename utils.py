@@ -169,6 +169,10 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
     depth_metrics = calc_depth_metrics(pred_depth, gt_depth)
     tqdm.write(", ".join([f"{item[0]}: {item[1]}" for item in depth_metrics.items()]))
 
+    msg = "rewrite metrics -> change to functional; \
+    psnr -> check data range of pred_pixels (1 or 255) \
+    check Max I value"
+    logger.critical(msg)
     psnr_metric = PeakSignalNoiseRatio()
     psnr = round(psnr_metric(pred_pixels, gt_pixels).item(), 3)
 
