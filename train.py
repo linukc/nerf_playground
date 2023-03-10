@@ -4,6 +4,7 @@ import sys
 from datetime import datetime
 from os.path import join as osp
 from os import makedirs, mkdir
+import numpy as np
 
 import torch
 import hydra
@@ -13,51 +14,26 @@ from omegaconf import DictConfig, OmegaConf
 import wandb
 
 from model.nerf_model import NeRFModel
-from datasets.blender import BlenderDataset
-from utils import set_seed, repeater, make_objects, analyze
+from datasets.load_blender import load_blender_data
+from utils import set_seed, make_objects, analyze
 from utils import have_uncommitted_changes, setup_loguru_level
 
-#pylint: disable=too-many-arguments, too-many-locals
-def eval_step(cfg, nerf_model, dataset, dataloader, step, exp_name):
-    """ Evaluation step.
-        Isolate gpu inference into func scope to release memory after with gc.
-    """
+mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
-    tqdm.write(f"[TEST] =======> Step: {step}")
-    ckpt_path = osp(cfg.training.exp_folder, exp_name,
-                    "checkpoints", f"step_{step}.pth")
-    nerf_model.save_state(ckpt_path)
+# Ray helpers
+def get_rays(H, W, K, c2w):
+    i, j = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))  # pytorch's meshgrid has indexing='ij'
+    i = i.t()
+    j = j.t()
+    dirs = torch.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -torch.ones_like(i)], -1)
+    # Rotate ray directions from camera frame to the world frame
+    rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3,:3], -1)  # dot product, equals to: [c2w.dot(dir) for dir in dirs]
+    # Translate camera frame's origin to the world frame. It is the origin of all rays.
+    rays_o = c2w[:3,-1].expand(rays_d.shape)
+    return rays_o, rays_d
 
-    if cfg.wandb.use:
-        artifact = wandb.Artifact(f"model_{step}", type='model')
-        artifact.add_file(ckpt_path)
-        wandb.run.log_artifact(artifact)
-
-    gt_pixels, gt_depth = [], []
-    pred_pixels, pred_depth, pred_disp, pred_accmap = [], [], [], []
-
-    with torch.no_grad():
-
-        for test_batch in dataloader:
-            test_rays = test_batch["ray"].to(cfg.training.device)
-            gt_pixels.append(test_batch["gt_pixel"].cpu())
-            gt_depth.append(test_batch["gt_depth"].cpu())
-
-            coarse_bundle, fine_bundle = nerf_model(test_rays)
-            if not fine_bundle:
-                bundle = coarse_bundle
-            else:
-                bundle = fine_bundle
-
-            pred_pixels.append(bundle['rgb_map'].detach().cpu())
-            pred_depth.append(bundle['depth_map'].detach().cpu().unsqueeze(1))
-            pred_disp.append(bundle['disp_map'].detach().cpu().unsqueeze(1))
-            pred_accmap.append(bundle['acc_map'].detach().cpu().unsqueeze(1))
-
-        analyze(gt_pixels, pred_pixels, gt_depth, pred_depth, pred_disp, pred_accmap,
-            image_size=dataset.image_size, use_wandb=cfg.wandb.use,
-            image_num=dataset.test_num / cfg.dataset.test_each,
-            path=osp(cfg.training.exp_folder, exp_name), step=step)
 
 def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statements
     """Train script entrypoint.
@@ -78,36 +54,75 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
     loss, optimizer, scheduler = make_objects(cfg,
         model_params=list(nerf_model.parameters()))
 
-    train_dataset = BlenderDataset(**cfg.dataset, split='train')
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, **cfg.dataloader.train)
-    train_dataloader = repeater(train_dataloader)
-
-    test_dataset = BlenderDataset(**cfg.dataset, split='test')
-    test_dataloader = torch.utils.data.DataLoader(test_dataset, **cfg.dataloader.val)
-
     nerf_model.train()
     nerf_model.to(cfg.training.device)
 
     step = 1
     start_time = torch.cuda.Event(enable_timing=True)
     end_time = torch.cuda.Event(enable_timing=True)
-    with tqdm(total=cfg.training.num_iterations, desc="Training process") as pbar:
-        for batch in train_dataloader:
 
-            rays = batch["ray"].to(cfg.training.device)
-            pixels = batch["pixel"].to(cfg.training.device)
+    ####
+    images, poses, render_poses, hwf, i_split = load_blender_data("/media/sergey_mipt/data/datasets/nerf_synthetic/lego",
+                                                                    True, 8)
+    print('Loaded blender', images.shape, render_poses.shape, hwf, "/media/sergey_mipt/data/datasets/nerf_synthetic/lego")
+    i_train, i_val, i_test = i_split
+
+    near = 2.
+    far = 6.
+
+    images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:]) # white bkg
+
+    # Cast intrinsics to right types
+    H, W, focal = hwf
+    H, W = int(H), int(W)
+    hwf = [H, W, focal]
+    K = None
+    if K is None:
+        K = np.array([
+            [focal, 0, 0.5*W],
+            [0, focal, 0.5*H],
+            [0, 0, 1]
+        ])
+
+    poses = torch.Tensor(poses).to("cuda")
+
+    ####
+
+    N_rand = cfg.dataloader.train.batch_size
+    with tqdm(total=cfg.training.num_iterations, desc="Training process") as pbar:
+        for i in range(cfg.training.num_iterations):
+
+            # Random from one image
+            img_i = np.random.choice(i_train)
+            target = images[img_i]
+            target = torch.Tensor(target).to("cuda")
+            pose = poses[img_i, :3,:4]
+
+            rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+
+            
+            coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+
+            coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+            select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+            select_coords = coords[select_inds].long()  # (N_rand, 2)
+            rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            batch_rays = torch.cat([rays_o, rays_d], 1)
+            target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
 
             start_time.record()
-            coarse_bundle, fine_bundle = nerf_model(rays)
+            coarse_bundle, fine_bundle = nerf_model(batch_rays)
             end_time.record()
             torch.cuda.synchronize()
             elapsed_time = start_time.elapsed_time(end_time)
 
             if not fine_bundle:
-                loss_value = loss(coarse_bundle['rgb_map'], pixels)
+                loss_value = loss(coarse_bundle['rgb_map'], target_s)
             else:
-                coarse_loss = loss(coarse_bundle['rgb_map'], pixels)
-                fine_loss = loss(fine_bundle['rgb_map'], pixels)
+                coarse_loss = loss(coarse_bundle['rgb_map'], target_s)
+                fine_loss = loss(fine_bundle['rgb_map'], target_s)
                 loss_value = coarse_loss + fine_loss
 
             optimizer.zero_grad()
@@ -122,14 +137,7 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
                 wandb.log({"loss": loss_value.item(),
                            "lr": scheduler.get_last_lr()[0],
                            "f+b_per_step(ms)": elapsed_time,
-                           "step": step})
-
-            if step % cfg.training.eval_each == 0:
-                nerf_model.eval()
-                nerf_model.volume_renderer.mode = "test"
-                eval_step(cfg, nerf_model, test_dataset, test_dataloader, step, exp_name)
-                nerf_model.train()
-                nerf_model.volume_renderer.mode = "training"
+                           "psnr": mse2psnr(fine_loss.detach().cpu()).item()})
 
             step += 1
             if step > cfg.training.num_iterations:
