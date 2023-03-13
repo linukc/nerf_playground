@@ -1,207 +1,109 @@
-"""Datasets implementation."""
-
-import os
-import json
-
 import torch
-import numpy as np
-from PIL import Image
-from tqdm import tqdm
-from loguru import logger
-from einops import rearrange
-from torchvision import transforms #pylint: disable=import-error
 from torch.utils.data import Dataset
+import json
+import numpy as np
+import os
+from PIL import Image
+from torchvision import transforms as T
 
+from .ray_utils import *
 
-#pylint: disable=too-many-instance-attributes
 class BlenderDataset(Dataset):
-    """Dataset to import scene from blender metadata.
-
-    Parameters
-    ----------
-    path: str
-        Path to folder with images and jsons.
-    split: str
-        Flag to decide which split of data to load.
-    """
-
-    #pylint: disable=too-many-arguments
-    def __init__(self, path: str,
-                       image_size: int,
-                       bg_color: int,
-                       split: str='train',
-                       test_each: int=50):
-
-        logger.warning(f"Process images as squares with {image_size}px side!")
-
-        self.path = path
-        self.image_size = image_size
-        self.bg_color = bg_color
+    def __init__(self, root_dir, split='train', img_wh=(800, 800)):
+        self.root_dir = root_dir
         self.split = split
-        self.test_each = test_each
+        assert img_wh[0] == img_wh[1], 'image width must equal image height!'
+        self.img_wh = img_wh
+        self.define_transforms()
 
-        self._train_rays = []
-        self._train_pixels = []
-        self._test_rays = []
-        self._test_pixels = []
-        self._test_depth_values = []
-        self.test_num = None
+        self.read_meta()
+        self.white_back = True
 
-        self.transform = transforms.ToTensor()
-        self.read_metadata()
+    def read_meta(self):
+        with open(os.path.join(self.root_dir,
+                               f"transforms_{self.split}.json"), 'r') as f:
+            self.meta = json.load(f)
 
-    def read_metadata(self):
-        """Reads json file and prepeares arrays for sampling."""
+        w, h = self.img_wh
+        self.focal = 0.5*800/np.tan(0.5*self.meta['camera_angle_x']) # original focal length
+                                                                     # when W=800
 
-        path = os.path.join(self.path, f"transforms_{self.split}.json")
-        with open(path, 'rt', encoding='utf-8') as file:
-            self.meta = json.load(file)
+        self.focal *= self.img_wh[0]/800 # modify focal length to match size self.img_wh
 
-        self.orig_image_size = 800
-        if self.orig_image_size // self.image_size != 1:
-            logger.warning(f"Resize gt_depth 800x800 values to {self.image_size}!")
+        # bounds, common for all scenes
+        self.near = 2.0
+        self.far = 6.0
+        self.bounds = np.array([self.near, self.far])
+        
+        # ray directions for all pixels, same for all images (same H, W, focal)
+        self.directions = \
+            get_ray_directions(h, w, self.focal) # (h, w, 3)
+            
+        if self.split == 'train': # create buffer of all rays and rgb data
+            self.image_paths = []
+            self.poses = []
+            self.all_rays = []
+            self.all_rgbs = []
+            for frame in self.meta['frames']:
+                pose = np.array(frame['transform_matrix'])[:3, :4]
+                self.poses += [pose]
+                c2w = torch.FloatTensor(pose)
 
-        self.focal = 0.5 * self.image_size / np.tan(0.5 * self.meta['camera_angle_x'])
-        self.focal *= self.image_size / 800  # modify focal length to match image_size
+                image_path = os.path.join(self.root_dir, f"{frame['file_path']}.png")
+                self.image_paths += [image_path]
+                img = Image.open(image_path)
+                img = img.resize(self.img_wh, Image.LANCZOS)
+                img = self.transform(img) # (4, h, w)
+                img = img.view(4, -1).permute(1, 0) # (h*w, 4) RGBA
+                img = img[:, :3]*img[:, -1:] + (1-img[:, -1:]) # blend A to RGB
+                self.all_rgbs += [img]
+                
+                rays_o, rays_d = get_rays(self.directions, c2w) # both (h*w, 3)
 
-        logger.debug("Calculate camera rays.")
-        self.camera_rays_origins, self.camera_rays_dir = \
-            self._get_pixels_rays_from_camera_metadata()
+                self.all_rays += [torch.cat([rays_o, rays_d, 
+                                             self.near*torch.ones_like(rays_o[:, :1]),
+                                             self.far*torch.ones_like(rays_o[:, :1])],
+                                             1)] # (h*w, 8)
 
-        if self.split == "train":
-            logger.debug("Load images and camera poses for train.")
-            self._read_train_data()
-        elif self.split == "test":
-            logger.debug("Load images, camera poses and depth for test.")
-            self._read_test_data()
+            self.all_rays = torch.cat(self.all_rays, 0) # (len(self.meta['frames])*h*w, 3)
+            self.all_rgbs = torch.cat(self.all_rgbs, 0) # (len(self.meta['frames])*h*w, 3)
 
-    def _get_pixels_rays_from_camera_metadata(self):
-        """Calculates rays vectors for each pixel.
-        Look at the all conventions here [1].
+    def define_transforms(self):
+        self.transform = T.ToTensor()
 
-        Returns
-        -------
-        rays_origins: torch.array(h, w, 3)
-            Vectors bases.
-        rays_directions: torch.array(h, w, 3)
-            Vectors directions.
+    def __len__(self):
+        if self.split == 'train':
+            return len(self.all_rays)
+        if self.split == 'val':
+            return 8 # only validate 8 images (to support <=8 gpus)
+        return len(self.meta['frames'])
 
-        [1] https://www.scratchapixel.com/lessons/3d-basic-rendering/
-        ray-tracing-generating-camera-rays/generating-camera-rays.html
-        """
-        #px_x = (((u + 0.5) / image_size) * 2 - 1) * np.tan(alpha/2)
-        #px_y = (-((v + 0.5) / image_size) * 2 + 1) * np.tan(alpha/2)
+    def __getitem__(self, idx):
+        if self.split == 'train': # use data in the buffers
+            sample = {'rays': self.all_rays[idx],
+                      'rgbs': self.all_rgbs[idx]}
 
-        linspace = np.linspace(0, self.image_size - 1, self.image_size, dtype=np.float32)
-        u_cord, v_coord = np.meshgrid(linspace, linspace)
-        rays_dir = np.stack([(u_cord - self.image_size / 2) / self.focal,
-                             -(v_coord - self.image_size / 2) / self.focal,
-                             -np.ones((self.image_size, self.image_size))], axis=-1)
+        else: # create data for each image separately
+            frame = self.meta['frames'][idx]
+            c2w = torch.FloatTensor(frame['transform_matrix'])[:3, :4]
 
-        return torch.zeros((self.image_size, self.image_size, 3)), \
-               torch.FloatTensor(rays_dir / np.expand_dims(np.linalg.norm(rays_dir, axis=-1),
-                axis=-1))
+            img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
+            img = img.resize(self.img_wh, Image.LANCZOS)
+            img = self.transform(img) # (4, H, W)
+            valid_mask = (img[-1]>0).flatten() # (H*W) valid color area
+            img = img.view(4, -1).permute(1, 0) # (H*W, 4) RGBA
+            img = img[:, :3]*img[:, -1:] + (1-img[:, -1:]) # blend A to RGB
 
-    def _get_rays_and_px_from_image(self, c2w, image_path):
-        rot_matrix, translate = c2w[:, :3], c2w[:, 3]
-        world_rays_origins = (self.camera_rays_origins + translate).view(-1, 3)
-        world_rays_dir = (self.camera_rays_dir @ rot_matrix.T).view(-1, 3)
-        rays = torch.cat([world_rays_origins,
-                            world_rays_dir], dim=1)
+            rays_o, rays_d = get_rays(self.directions, c2w)
 
-        img = Image.open(image_path) #RGBA
-        background = Image.new('RGBA', img.size, (self.bg_color,) * 3)
-        alpha_composite = Image.alpha_composite(background, img)
-        img = alpha_composite.convert("RGB").resize((self.image_size,) * 2, Image.LANCZOS)
-        img = self.transform(img)
-        img = rearrange(img, 'c h w -> (h w) c')
+            rays = torch.cat([rays_o, rays_d, 
+                              self.near*torch.ones_like(rays_o[:, :1]),
+                              self.far*torch.ones_like(rays_o[:, :1])],
+                              1) # (H*W, 8)
 
-        return rays, img
+            sample = {'rays': rays,
+                      'rgbs': img,
+                      'c2w': c2w,
+                      'valid_mask': valid_mask}
 
-    def _read_train_data(self):
-        """Fills self.rays and self.pixels arrays."""
-
-        for frame in tqdm(self.meta["frames"]):
-            camera_to_world = torch.FloatTensor(frame["transform_matrix"])[:3, :4]
-            image_path = os.path.join(self.path, f"{frame['file_path']}.png")
-            rays, img = self._get_rays_and_px_from_image(camera_to_world, image_path)
-            self._train_rays.append(rays) # h*w 6
-            self._train_pixels.append(img) # h*w 3
-
-        # frames_count h*w 6 -> ray_count 6
-        self._train_rays = torch.cat(self._train_rays, dim=0)
-        # frames_count h*w 3 -> ray_count 3
-        self._train_pixels = torch.cat(self._train_pixels, dim=0)
-
-    def _read_test_data(self):
-        """Fills self.rays and self.pixels arrays."""
-        self.test_num = len(self.meta["frames"])
-
-        split_name = self.path.split("/")[-1]
-        depth_index = {"lego": "0001",
-                       "chair": "0000",
-                       "drums": "0001",
-                       "ficus": "0136",
-                       "hotdog": "0029",
-                       "materials": "0000",
-                       "mic": "0186",
-                       "ship": "0002"}
-
-        frames = self.meta["frames"][::self.test_each]
-        for frame in tqdm(frames):
-            camera_to_world = torch.FloatTensor(frame["transform_matrix"])[:3, :4]
-            image_path = os.path.join(self.path, f"{frame['file_path']}.png")
-            rays, img = self._get_rays_and_px_from_image(camera_to_world, image_path)
-            self._test_rays.append(rays) # h*w 6
-            self._test_pixels.append(img) # h*w 3
-
-            depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
-            depth_image = Image.open(
-                os.path.join(self.path, depth_path)).resize(
-                    (self.image_size,) * 2, Image.LANCZOS)
-            depth_values = np.array(depth_image)[:, :, 0] # ~ 170 max value, looks like cm
-            depth_values = self.transform(depth_values)
-            depth_values = rearrange(depth_values, 'c h w -> (h w) c')
-            self._test_depth_values.append(depth_values) # h*w 1
-
-        self._test_rays = torch.cat(self._test_rays, dim=0) # 4 h*w 6 -> ray_count 6
-        self._test_pixels = torch.cat(self._test_pixels, dim=0) # 4 h*w 3 -> ray_count 3
-        self._test_depth_values = torch.cat(self._test_depth_values, dim=0) # 4 h*w 1 -> ray_count 1
-
-    def __getitem__(self, idx: int) -> dict:
-        """Extracts ray by index.
-
-        Parameters
-        ----------
-        idx:
-            Ray index.
-
-        Returns
-        -------
-        sample:
-            Ray and pixel value.
-            dict("ray": torch.tensor([6]),
-                 "pixel": torch.tensor(3]))
-        """
-
-        if self.split == "train":
-            return {"ray": self._train_rays[idx], "pixel": self._train_pixels[idx]}
-        if self.split == "test":
-            return {"ray": self._test_rays[idx], "gt_pixel": self._test_pixels[idx],
-                    "gt_depth": self._test_depth_values[idx]}
-        return None
-
-    def __len__(self) -> int:
-        """Defines number of rays in scene.
-
-        Returns
-        -------
-        len:
-            Number of rays.
-        """
-
-        if self.split == "train":
-            return self._train_rays.shape[0]
-        if self.split == "test":
-            return self._test_rays.shape[0]
-        return None
+        return sample
