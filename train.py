@@ -20,7 +20,7 @@ from utils import have_uncommitted_changes, setup_loguru_level
 
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.set_default_tensor_type('torch.cuda.FloatTensor')
+#torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 # Ray helpers
 def get_rays(H, W, K, c2w):
@@ -34,6 +34,13 @@ def get_rays(H, W, K, c2w):
     rays_o = c2w[:3,-1].expand(rays_d.shape)
     return rays_o, rays_d
 
+from itertools import repeat
+def repeater(dataloader):
+    """ Create infinite dataloader."""
+
+    for loader in repeat(dataloader):
+        for data in loader:
+            yield data
 
 def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statements
     """Train script entrypoint.
@@ -62,67 +69,81 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
     end_time = torch.cuda.Event(enable_timing=True)
 
     ####
-    images, poses, render_poses, hwf, i_split = load_blender_data("/media/sergey_mipt/data/datasets/nerf_synthetic/lego",
-                                                                    True, 8)
-    print('Loaded blender', images.shape, render_poses.shape, hwf, "/media/sergey_mipt/data/datasets/nerf_synthetic/lego")
-    i_train, i_val, i_test = i_split
+    # images, poses, render_poses, hwf, i_split = load_blender_data("/media/sergey_mipt/data/datasets/nerf_synthetic/lego",
+    #                                                                 True, 8)
+    # print('Loaded blender', images.shape, render_poses.shape, hwf, "/media/sergey_mipt/data/datasets/nerf_synthetic/lego")
+    # i_train, i_val, i_test = i_split
 
-    near = 2.
-    far = 6.
+    # near = 2.
+    # far = 6.
 
-    images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:]) # white bkg
+    # images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:]) # white bkg
 
-    # Cast intrinsics to right types
-    H, W, focal = hwf
-    H, W = int(H), int(W)
-    hwf = [H, W, focal]
-    K = None
-    if K is None:
-        K = np.array([
-            [focal, 0, 0.5*W],
-            [0, focal, 0.5*H],
-            [0, 0, 1]
-        ])
+    # # Cast intrinsics to right types
+    # H, W, focal = hwf
+    # H, W = int(H), int(W)
+    # hwf = [H, W, focal]
+    # K = None
+    # if K is None:
+    #     K = np.array([
+    #         [focal, 0, 0.5*W],
+    #         [0, focal, 0.5*H],
+    #         [0, 0, 1]
+    #     ])
 
-    poses = torch.Tensor(poses).to("cuda")
+    # poses = torch.Tensor(poses).to("cuda")
 
     ####
+    from datasets.blender import BlenderDataset
+    # from datasets.simple_nerf_dataset import BlenderDatasetOld
+    # train_dataset = BlenderDatasetOld("/media/sergey_mipt/data/datasets/nerf_synthetic/lego", split='train', img_wh=(400, 400))
+    train_dataset = BlenderDataset(path="/media/sergey_mipt/data/datasets/nerf_synthetic/lego",
+                                split='train',
+                                image_size=400,
+                                bg_color=255)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, **cfg.dataloader.train)
+    train_dataloader = repeater(train_dataloader)
+
 
     N_rand = cfg.dataloader.train.batch_size
     with tqdm(total=cfg.training.num_iterations, desc="Training process") as pbar:
-        for i in range(cfg.training.num_iterations):
+        for batch in train_dataloader:
 
             # Random from one image
-            img_i = np.random.choice(i_train)
-            target = images[img_i]
-            target = torch.Tensor(target).to("cuda")
-            pose = poses[img_i, :3,:4]
+            # img_i = np.random.choice(i_train)
+            # target = images[img_i]
+            # target = torch.Tensor(target).to("cuda")
+            # pose = poses[img_i, :3,:4]
 
-            rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+            # rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
 
             
-            coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
+            # coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
 
-            coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
-            select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
-            select_coords = coords[select_inds].long()  # (N_rand, 2)
-            rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-            rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-            batch_rays = torch.cat([rays_o, rays_d], 1)
-            target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-
+            # coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
+            # select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
+            # select_coords = coords[select_inds].long()  # (N_rand, 2)
+            # rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            # rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            # batch_rays = torch.cat([rays_o, rays_d], 1)
+            # target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+            
+            # rays = batch["rays"].to(cfg.training.device)
+            # pixels = batch["rgbs"].to(cfg.training.device)
+            rays = batch["ray"].to(cfg.training.device)
+            pixels = batch["pixel"].to(cfg.training.device)
 
             start_time.record()
-            coarse_bundle, fine_bundle = nerf_model(batch_rays)
+            coarse_bundle, fine_bundle = nerf_model(rays)
             end_time.record()
             torch.cuda.synchronize()
             elapsed_time = start_time.elapsed_time(end_time)
 
             if not fine_bundle:
-                loss_value = loss(coarse_bundle['rgb_map'], target_s)
+                loss_value = loss(coarse_bundle['rgb_map'], pixels)
             else:
-                coarse_loss = loss(coarse_bundle['rgb_map'], target_s)
-                fine_loss = loss(fine_bundle['rgb_map'], target_s)
+                coarse_loss = loss(coarse_bundle['rgb_map'], pixels)
+                fine_loss = loss(fine_bundle['rgb_map'], pixels)
                 loss_value = coarse_loss + fine_loss
 
             optimizer.zero_grad()

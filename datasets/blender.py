@@ -61,7 +61,7 @@ class BlenderDataset(Dataset):
         if self.orig_image_size // self.image_size != 1:
             logger.warning(f"Resize gt_depth 800x800 values to {self.image_size}!")
 
-        self.focal = 0.5 * self.image_size / np.tan(0.5 * self.meta['camera_angle_x'])
+        self.focal = 0.5 * 800 / np.tan(0.5 * self.meta['camera_angle_x'])
         self.focal *= self.image_size / 800  # modify focal length to match image_size
 
         logger.debug("Calculate camera rays.")
@@ -97,15 +97,16 @@ class BlenderDataset(Dataset):
         rays_dir = np.stack([(u_cord - self.image_size / 2) / self.focal,
                              -(v_coord - self.image_size / 2) / self.focal,
                              -np.ones((self.image_size, self.image_size))], axis=-1)
+        print(self.focal, self.image_size)
 
         return torch.zeros((self.image_size, self.image_size, 3)), \
-               torch.FloatTensor(rays_dir / np.expand_dims(np.linalg.norm(rays_dir, axis=-1),
-                axis=-1))
+               torch.FloatTensor(rays_dir)
 
     def _get_rays_and_px_from_image(self, c2w, image_path):
         rot_matrix, translate = c2w[:, :3], c2w[:, 3]
         world_rays_origins = (self.camera_rays_origins + translate).view(-1, 3)
         world_rays_dir = (self.camera_rays_dir @ rot_matrix.T).view(-1, 3)
+        world_rays_dir = world_rays_dir / torch.norm(world_rays_dir, dim=-1, keepdim=True)
         rays = torch.cat([world_rays_origins,
                             world_rays_dir], dim=1)
 
