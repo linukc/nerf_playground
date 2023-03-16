@@ -1,3 +1,5 @@
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/094f9d7eaabc4e07b03ed8de0526862d)](https://www.codacy.com/gh/linukc/nerf_playground/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=linukc/nerf_playground&amp;utm_campaign=Badge_Grade)
+
 To do:
 - real image dataset (NDC space ablation study, depth not lay in -1 to 1) see ablation study A chapter
 - get rid of pylint disables in the code (redesign functions with too many args and statements).
