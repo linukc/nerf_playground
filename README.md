@@ -1,6 +1,14 @@
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/094f9d7eaabc4e07b03ed8de0526862d)](https://www.codacy.com/gh/linukc/nerf_playground/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=linukc/nerf_playground&amp;utm_campaign=Badge_Grade)
 
 To do:
+- rewrite dataset duplication
+- rewrite analyze - func should be independent and out of context of specific dataset 
+- implement correct savings https://discuss.pytorch.org/t/loading-optimizer-dict-starts-training-from-initial-lr/36328 (+shed + optim)
+- remove use.fine mlp flag
+- get rid of duality between mlp.use_viewdir and forward(..., viewdir=None)
+- rewrite model ... some part.use to model.use
+- add blender one image_dataset
+- align train config options with code
 - real image dataset (NDC space ablation study, depth not lay in -1 to 1) see ablation study A chapter
 - get rid of pylint disables in the code (redesign functions with too many args and statements).
 
@@ -8,7 +16,7 @@ Run:
 ```python
 python3 -m venv venv  
 pip3 install requirements.txt
-python3 train.py -m dataset.path=<path_to_scene in blender dataset> (check config before)
+python3 train.py
 ```
 https://dtransposed.github.io/blog/2022/08/06/NeRF/
 https://hmn.wiki/nn/Rendering_equation

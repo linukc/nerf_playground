@@ -6,6 +6,9 @@ import random
 from itertools import repeat
 from subprocess import check_output, CalledProcessError
 
+import cv2
+import torchvision.transforms as T
+from PIL import Image
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -125,15 +128,21 @@ def repeater(dataloader):
             yield data
 
 #pylint: disable=too-many-arguments, too-many-locals
-def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_disp, pred_accmap,
+def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_accmap,
     image_size, use_wandb, image_num, path, step):
     """ Calculate metrics by predictions."""
 
-    def norm_image(tensor: torch.Tensor):
+    def norm_image_and_color(tensor: torch.Tensor):
         min_, _ = torch.min(tensor, dim=0, keepdim=True)
         max_, _ = torch.max(tensor, dim=0, keepdim=True)
-        # to perform brodcast of [num c h w] with [1 c h w] -> [num c h w]
-        return (tensor - min_) / (max_ - min_) * 255
+        x = (tensor - min_) / (max_ - min_ + 1e-8) * 255
+        x = x.squeeze(dim=1).numpy().astype(np.uint8) # 8 400 400
+        out = torch.zeros((8, 3, 400, 400))
+        for i in range(8):
+            color= Image.fromarray(cv2.applyColorMap(x[i], cv2.COLORMAP_TURBO))
+            color = T.ToTensor()(color) # (3, H, W)
+            out[i] = color
+        return out * 255
 
     gt_pixels = rearrange(torch.cat(gt_pixels, dim=0),
         '(num h w) c -> num c h w', h=image_size, w=image_size, c=3)
@@ -142,8 +151,6 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
     gt_depth = rearrange(torch.cat(gt_depth, dim=0),
         '(num h w) c -> num c h w', h=image_size, w=image_size, c=1)
     pred_depth = rearrange(torch.cat(pred_depth, dim=0),
-        '(num h w) c -> num c h w', h=image_size, w=image_size, c=1)
-    pred_disp = rearrange(torch.cat(pred_disp, dim=0),
         '(num h w) c -> num c h w', h=image_size, w=image_size, c=1)
     pred_accmap = rearrange(torch.cat(pred_accmap, dim=0),
         '(num h w) c -> num c h w', h=image_size, w=image_size, c=1)
@@ -158,21 +165,29 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
     tvn.save_image(tensor=torch.cat((pred_pixels, gt_pixels), dim=0),
         fp=f"{path}/images/images_{step}.png", nrow=8)
     os.makedirs(os.path.join(path, "depth"), exist_ok=True)
-    tvn.save_image(tensor=torch.cat((norm_image(pred_depth),
-                                     norm_image(gt_depth)),
-                            dim=0),
+    tvn.save_image(tensor=norm_image_and_color(pred_depth),
                         fp=f"{path}/depth/depth_{step}.png", nrow=8)
     #tvn.save_image(tensor=pred_disp, fp=f"{path}/disp_{step}.png", nrow=8)
     os.makedirs(os.path.join(path, "acc_map"), exist_ok=True)
-    tvn.save_image(tensor=norm_image(pred_accmap), fp=f"{path}/acc_map/acc_map_{step}.png", nrow=8)
+    tvn.save_image(tensor=norm_image_and_color(pred_accmap), fp=f"{path}/acc_map/acc_map_{step}.png", nrow=8)
 
-    depth_metrics = calc_depth_metrics(pred_depth, gt_depth)
+    mask = gt_pixels.sum(dim=1)/3 # 8 400 400
+    mask.unsqueeze_(dim=1)
+    mask = mask != 1.0
+    mask2 = gt_depth > 2.0
+    mask = torch.logical_and(mask, mask2)
+    depth_metrics = calc_depth_metrics(pred_depth, gt_depth, mask)
+
+    mask = mask.float()
+    os.makedirs(os.path.join(path, "object_mask"), exist_ok=True)
+    tvn.save_image(tensor=mask, fp=f"{path}/object_mask/mask_{step}.png", nrow=8)
+    
     tqdm.write(", ".join([f"{item[0]}: {item[1]}" for item in depth_metrics.items()]))
 
     msg = "rewrite metrics -> change to functional; \
     psnr -> check data range of pred_pixels (1 or 255) \
     check Max I value"
-    logger.critical(msg)
+    #logger.critical(msg)
     psnr_metric = PeakSignalNoiseRatio()
     psnr = round(psnr_metric(pred_pixels, gt_pixels).item(), 3)
 
@@ -180,7 +195,7 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
     ssim = round(ssim_metric(pred_pixels, gt_pixels).item(), 3)
 
     lpips_metric = LearnedPerceptualImagePatchSimilarity(net_type='vgg', normalize=True)
-    lpips = round(lpips_metric(pred_pixels / 255, gt_pixels / 255).detach().cpu().item(), 3)
+    lpips = round(lpips_metric((pred_pixels / 255).clamp(0, 1), gt_pixels / 255).detach().cpu().item(), 3)
 
     px_metrics = {"psnr": psnr, "ssim": ssim, "lpips": lpips}
     tqdm.write(", ".join([f"{item[0]}: {item[1]}" for item in px_metrics.items()]))
@@ -189,22 +204,25 @@ def analyze(gt_pixels: torch.Tensor, pred_pixels, gt_depth, pred_depth, pred_dis
         wandb.log(depth_metrics)
         wandb.log(px_metrics)
 
-def calc_depth_metrics(pred_t, gt_t):
+def calc_depth_metrics(pred_t, gt_t, masks):
     """Calc depth metrics."""
-
+    #print(masks.shape)
     batch_size = gt_t.size(0)
     scale, abs_diff, abs_rel, sq_rel, a_1, a_2, a_3 = 0, 0, 0, 0, 0, 0, 0
     tqdm.write("[WARNING] Calculate depth metrics after scaling by gt_depth!")
 
-    for pair in zip(pred_t, gt_t):
-        pred, grount_truth = pair
-
-        valid = (grount_truth > 0)
-        valid_gt = grount_truth[valid]
-        valid_pred = pred[valid].clamp(1e-3)
+    for pair in zip(pred_t, gt_t, masks):
+        pred, grount_truth, one_mask = pair
+        # print(pred.shape)
+        # print(grount_truth.shape)
+        # print(one_mask.shape)
+        #only for blender lego
+        valid_gt = grount_truth[one_mask]
+        valid_pred = pred[one_mask]
         scale += torch.median(valid_gt) / torch.median(valid_pred)
 
-        valid_pred *= scale
+        #valid_pred *= scale
+        print("calc without scale for blender dataset")
         thresh = torch.max((valid_gt / valid_pred), (valid_pred / valid_gt))
         a_1 += (thresh < 1.25).float().mean()
         a_2 += (thresh < 1.25 ** 2).float().mean()

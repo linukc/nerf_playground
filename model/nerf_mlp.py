@@ -55,10 +55,16 @@ class NeRFMLP(nn.Module):
 
         self.density = torch.nn.Linear(base_features_size, 1)
         self.dense_mlp = torch.nn.Linear(base_features_size, base_features_size)
-        self.color = nn.Sequential(
-            torch.nn.Linear(base_features_size + in_features_direction, base_features_size // 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(base_features_size // 2, 3))
+        if cfg_model.mlp.add_view_dependency:
+            self.color = nn.Sequential(
+                torch.nn.Linear(base_features_size + in_features_direction, base_features_size // 2),
+                torch.nn.ReLU(),
+                torch.nn.Linear(base_features_size // 2, 3))
+        else:
+            self.color = nn.Sequential(
+                torch.nn.Linear(base_features_size, base_features_size // 2),
+                torch.nn.ReLU(),
+                torch.nn.Linear(base_features_size // 2, 3))
 
     def forward(self, xyz: torch.Tensor, viewdirs: torch.Tensor=None):
         """MLP forward propogation function.
@@ -87,10 +93,10 @@ class NeRFMLP(nn.Module):
             xyz = layer(xyz)
 
         density = self.density(xyz)
-        if viewdirs is None:
-            return density
-
         xyz = self.dense_mlp(xyz)
-        color = self.color(torch.cat((xyz, viewdirs), dim=-1))
+        if viewdirs is not None:
+            color = self.color(torch.cat((xyz, viewdirs), dim=-1))
+        else:
+            color = self.color(xyz)
 
         return torch.cat((color, density), dim=-1)

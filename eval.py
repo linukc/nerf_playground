@@ -7,7 +7,7 @@ from model.nerf_model import NeRFModel
 
 
 #pylint: disable = no-value-for-parameter
-@hydra.main(version_base=None, config_path="configs", config_name="default_train")
+@hydra.main(version_base=None, config_path="configs", config_name="eval")
 def main(cfg) -> None:
     """ Entrypoint function."""
 
@@ -21,8 +21,7 @@ def main(cfg) -> None:
     vertices, triangles = nerf_model.extract_mesh(
         iso_level=32,
         sample_resolution=128,
-        limit=1.2
-    )
+        limit=1.2)
 
     mesh = trimesh.Trimesh(vertices, triangles)
     mesh.show()

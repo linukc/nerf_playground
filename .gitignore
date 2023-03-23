@@ -1,10 +1,14 @@
-venv/
+# environment
+.vscode/
+.pre-commit-config.yaml
 wandb/
+venv/
+# python
+*__pycache__*
+# custom
 eval/
 checkpoints/
 experiments/
-*__pycache__*
-.pre-commit-config.yaml
-.vscode/
+# hydra logging
 multirun/
-*pretrained*
+output/

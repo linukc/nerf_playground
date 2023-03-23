@@ -39,7 +39,9 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
             logger.warning("Skip fine_mlp!")
 
         self.interval_sampler = IntervalSampler(**cfg.model.interval_sampler)
-        self.hsampler = HierarchicalPDFSampler(**cfg.model.hierarchical_sampler)
+        if cfg.model.hierarchical_sampler.use:
+            self.hsampler = HierarchicalPDFSampler(cfg.model.hierarchical_sampler.num_fine_samples,
+                                                   cfg.model.hierarchical_sampler.perturb)
         self.volume_renderer = VolumeRenderer(**cfg.model.volume_renderer)
 
         self.cfg = cfg
@@ -72,9 +74,9 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
                 # Generating intervals
                 ray_depth_values = self.interval_sampler(ray_count=num_rays)
             elif renderer == "fine":
-                ray_depth_values = self.hsampler(ray_depth_values,
-                                                 coarse_bundle['weights']) #pylint: disable=unsubscriptable-object
-
+                if self.cfg.model.hierarchical_sampler.use:
+                    ray_depth_values = self.hsampler(ray_depth_values,
+                                                     coarse_bundle['weights']) #pylint: disable=unsubscriptable-object
             # [num_rays, self.num_coarse_samples]
             ray_points = intervals_to_ray_points(
                 point_intervals=ray_depth_values, ray_origins=ray_origins, ray_directions=ray_dirs)

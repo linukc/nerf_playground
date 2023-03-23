@@ -1,207 +1,189 @@
 """Datasets implementation."""
 
 import os
+import cv2
 import json
-
 import torch
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
 from loguru import logger
 from einops import rearrange
-from torchvision import transforms #pylint: disable=import-error
+from torchvision import transforms
 from torch.utils.data import Dataset
+from .ray_utils import get_ray_dir_cam, get_rays_torch
 
+depth_index = {"lego": "0001",
+                "chair": "0000",
+                "drums": "0001",
+                "ficus": "0136",
+                "hotdog": "0029",
+                "materials": "0000",
+                "mic": "0186",
+                "ship": "0002"}
 
-#pylint: disable=too-many-instance-attributes
-class BlenderDataset(Dataset):
-    """Dataset to import scene from blender metadata.
-
-    Parameters
-    ----------
-    path: str
-        Path to folder with images and jsons.
-    split: str
-        Flag to decide which split of data to load.
-    """
-
-    #pylint: disable=too-many-arguments
-    def __init__(self, path: str,
-                       image_size: int,
-                       bg_color: int,
-                       split: str='train',
-                       test_each: int=50):
-
-        logger.warning(f"Process images as squares with {image_size}px side!")
-
-        self.path = path
+class BlenderCombined(Dataset):
+    def __init__(self, root_path, image_size, **kwargs):
+        self.root_dir = root_path
         self.image_size = image_size
-        self.bg_color = bg_color
-        self.split = split
-        self.test_each = test_each
+        logger.warning(f"Resize 800x800 values to {self.image_size}x{self.image_size}!")
+        self.split = kwargs.get("section")
+        self.define_transforms()
 
-        self._train_rays = []
-        self._train_pixels = []
-        self._test_rays = []
-        self._test_pixels = []
-        self._test_depth_values = []
-        self.test_num = None
+        self.read_meta()
 
+    def read_meta(self):
+        with open(os.path.join(self.root_dir, f"transforms_{self.split}.json"), 'r') as f:
+            self.meta = json.load(f)
+
+        w, h = self.image_size, self.image_size
+        self.focal = 0.5 * 800 / np.tan(0.5 * self.meta['camera_angle_x'])  # original focal length
+        # when W=800
+
+        self.focal *= self.image_size / 800  # modify focal length to match size self.img_wh
+
+        # bounds, common for all scenes
+        self.near = 2.0
+        self.far = 6.0
+        self.bounds = np.array([self.near, self.far])
+
+        # ray directions for all pixels in camera coordinates, same for all images (same H, W, focal)
+        self.dir_cam = \
+            get_ray_dir_cam(h, w, self.focal) # (h, w, 3)
+
+        self.all_rays = []
+        self.all_rgbs = []
+        if self.split == 'train':  # create buffer of all rays and rgb data
+            for frame in self.meta['frames']:
+                pose = np.array(frame['transform_matrix'])[:3, :4]
+                c2w = torch.FloatTensor(pose)
+
+                image_path = os.path.join(self.root_dir, f"{frame['file_path']}.png")
+                img = Image.open(image_path)
+                img = img.resize((self.image_size,) * 2, Image.LANCZOS)
+                img = self.transform(img)  # (4, h, w)
+                img = img.view(4, -1).permute(1, 0)  # (h*w, 4) RGBA -> (640000, 4)
+                img = img[:, :3] * img[:, -1:] + (1 - img[:, -1:])  # blend A to RGB -> (h*w, 3)
+                self.all_rgbs += [img]
+
+                rays_o, rays_d = get_rays_torch(self.dir_cam, c2w)  # both (h*w, 3)
+
+                self.all_rays += [
+                    torch.cat(
+                        [rays_o, rays_d, self.near * torch.ones_like(rays_o[:, :1]), self.far * torch.ones_like(rays_o[:, :1])], 1
+                    )
+                ]  # (h*w, 8)
+        elif self.split == 'test':
+            self.all_depth = []
+            frames = self.meta["frames"][::25]
+            for frame in frames:
+                # create data for each image separately
+                c2w = torch.FloatTensor(frame['transform_matrix'])[:3, :4]
+
+                img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
+                img = img.resize((self.image_size,) * 2, Image.LANCZOS)
+                img = self.transform(img)  # (4, H, W)
+                #valid_mask = (img[-1] > 0).flatten()  # (H*W) valid color area
+                img = img.view(4, -1).permute(1, 0)  # (H*W, 4) RGBA
+                img = img[:, :3] * img[:, -1:] + (1 - img[:, -1:])  # blend A to RGB
+                self.all_rgbs += [img]
+
+                split_name = self.root_dir.split("/")[-1]
+                depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
+                #print(depth_path)
+                depth = cv2.imread(os.path.join(self.root_dir, depth_path), 0) # grayscale
+                depth = cv2.resize(depth, (400,400), interpolation=cv2.INTER_LANCZOS4)
+                #cv2.imwrite("gt_depth.png", depth)
+                # depth_image = Image.open(
+                #     os.path.join(self.root_dir, depth_path)).resize(
+                #         (self.image_size,) * 2, Image.LANCZOS).convert('L')
+                #depth_image = np.array(depth_image)
+                #https://github.com/bmild/nerf/issues/107
+                #https://github.com/bmild/nerf/issues/77
+                # depth_values has some noise with zero D -> value == 2.0 should be filtered in metric calculation
+                near = 2.
+                far = 6.
+                depth_values = (far+near)*(1 - (depth / 255.).astype(np.float32))
+                depth_values = torch.from_numpy(depth_values).view(-1, 1) # 400, 400
+                self.all_depth += [depth_values]
+
+                #depth_values = self.transform(depth_values)
+                #depth_values = rearrange(depth_values, 'c h w -> (h w) c')
+
+                rays_o, rays_d = get_rays_torch(self.dir_cam, c2w)
+                self.all_rays += [
+                    torch.cat(
+                        [rays_o, rays_d, self.near * torch.ones_like(rays_o[:, :1]), self.far * torch.ones_like(rays_o[:, :1])], 1
+                    )
+                ]  # (h*w, 8)
+
+        '''
+        flatten all rays/rgb tensor
+            * self.all_rgbs[idx] -> (r,g,b)
+            * self.all_rays[idx] -> (ox,oy,oz,dx,dy,dz,near,far)
+        '''
+        self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 8) -> (100x800x800, 8)
+        self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3) -> (100x800x800, 3)
+        if self.split == "test":
+            self.all_depth = torch.cat(self.all_depth, 0)
+
+    def define_transforms(self):
         self.transform = transforms.ToTensor()
-        self.read_metadata()
 
-    def read_metadata(self):
-        """Reads json file and prepeares arrays for sampling."""
+    def __len__(self):
+        # if self.split == 'train':
+        #     return len(self.all_rays)
+        # elif self.split == 'val':
+        #     raise NotImplementedError
+        # elif self.split == 'test':
+        #     return 8  # only validate 8 images (to support <=8 gpus)
+        # return len(self.meta['frames'])
+        return len(self.all_rays)
 
-        path = os.path.join(self.path, f"transforms_{self.split}.json")
-        with open(path, 'rt', encoding='utf-8') as file:
-            self.meta = json.load(file)
+    def __getitem__(self, idx):
+        if self.split ==  "train":
+            return {'rays': self.all_rays[idx], 'rgbs': self.all_rgbs[idx]}
+        else:
+            return {'rays': self.all_rays[idx], 'rgbs': self.all_rgbs[idx], 'depth': self.all_depth[idx]}
+        # if self.split == 'train':  # use data in the buffers
+        #     sample = {'rays': self.all_rays[idx], 'rgbs': self.all_rgbs[idx]}
+        # elif self.split == 'val':
+        #     raise NotImplementedError
+        # elif self.split == 'test':  
+        #     idx = 25 * idx - 1 if idx > 0 else 0
+        #     # create data for each image separately
+        #     frame = self.meta['frames'][idx]
+        #     c2w = torch.FloatTensor(frame['transform_matrix'])[:3, :4]
 
-        self.orig_image_size = 800
-        if self.orig_image_size // self.image_size != 1:
-            logger.warning(f"Resize gt_depth 800x800 values to {self.image_size}!")
+        #     img = Image.open(os.path.join(self.root_dir, f"{frame['file_path']}.png"))
+        #     img = img.resize((self.image_size,) * 2, Image.LANCZOS)
+        #     img = self.transform(img)  # (4, H, W)
+        #     valid_mask = (img[-1] > 0).flatten()  # (H*W) valid color area
+        #     img = img.view(4, -1).permute(1, 0)  # (H*W, 4) RGBA
+        #     img = img[:, :3] * img[:, -1:] + (1 - img[:, -1:])  # blend A to RGB
 
-        self.focal = 0.5 * self.image_size / np.tan(0.5 * self.meta['camera_angle_x'])
-        self.focal *= self.image_size / 800  # modify focal length to match image_size
+        #     split_name = self.root_dir.split("/")[-1]
+        #     depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
+        #     depth_image = Image.open(
+        #         os.path.join(self.root_dir, depth_path)).resize(
+        #             (self.image_size,) * 2, Image.LANCZOS).convert('L')
+        #     depth_image = np.array(depth_image)
+        #     #https://github.com/bmild/nerf/issues/107
+        #     #https://github.com/bmild/nerf/issues/77
+        #     # depth_values has some noise with zero D -> value == 2.0 should be filtered in metric calculation
+        #     near = 2.
+        #     far = 8.
+        #     depth_values = near + (far - near)*(1. - (depth_image / 255.).astype(np.float32))
+        #     depth_values = torch.from_numpy(depth_values).unsqueeze(dim=2) # 400, 400, 1
 
-        logger.debug("Calculate camera rays.")
-        self.camera_rays_origins, self.camera_rays_dir = \
-            self._get_pixels_rays_from_camera_metadata()
+        #     #depth_values = self.transform(depth_values)
+        #     #depth_values = rearrange(depth_values, 'c h w -> (h w) c')
 
-        if self.split == "train":
-            logger.debug("Load images and camera poses for train.")
-            self._read_train_data()
-        elif self.split == "test":
-            logger.debug("Load images, camera poses and depth for test.")
-            self._read_test_data()
+        #     rays_o, rays_d = get_rays_torch(self.dir_cam, c2w)
 
-    def _get_pixels_rays_from_camera_metadata(self):
-        """Calculates rays vectors for each pixel.
-        Look at the all conventions here [1].
+        #     rays = torch.cat(
+        #         [rays_o, rays_d, self.near * torch.ones_like(rays_o[:, :1]), self.far * torch.ones_like(rays_o[:, :1])], 1
+        #     )  # (H*W, 8)
 
-        Returns
-        -------
-        rays_origins: torch.array(h, w, 3)
-            Vectors bases.
-        rays_directions: torch.array(h, w, 3)
-            Vectors directions.
+        #     sample = {'rays': rays, 'rgbs': img, 'c2w': c2w, 'valid_mask': valid_mask, "depth": depth_values}
 
-        [1] https://www.scratchapixel.com/lessons/3d-basic-rendering/
-        ray-tracing-generating-camera-rays/generating-camera-rays.html
-        """
-        #px_x = (((u + 0.5) / image_size) * 2 - 1) * np.tan(alpha/2)
-        #px_y = (-((v + 0.5) / image_size) * 2 + 1) * np.tan(alpha/2)
-
-        linspace = np.linspace(0, self.image_size - 1, self.image_size, dtype=np.float32)
-        u_cord, v_coord = np.meshgrid(linspace, linspace)
-        rays_dir = np.stack([(u_cord - self.image_size / 2) / self.focal,
-                             -(v_coord - self.image_size / 2) / self.focal,
-                             -np.ones((self.image_size, self.image_size))], axis=-1)
-
-        return torch.zeros((self.image_size, self.image_size, 3)), \
-               torch.FloatTensor(rays_dir / np.expand_dims(np.linalg.norm(rays_dir, axis=-1),
-                axis=-1))
-
-    def _get_rays_and_px_from_image(self, c2w, image_path):
-        rot_matrix, translate = c2w[:, :3], c2w[:, 3]
-        world_rays_origins = (self.camera_rays_origins + translate).view(-1, 3)
-        world_rays_dir = (self.camera_rays_dir @ rot_matrix.T).view(-1, 3)
-        rays = torch.cat([world_rays_origins,
-                            world_rays_dir], dim=1)
-
-        img = Image.open(image_path) #RGBA
-        background = Image.new('RGBA', img.size, (self.bg_color,) * 3)
-        alpha_composite = Image.alpha_composite(background, img)
-        img = alpha_composite.convert("RGB").resize((self.image_size,) * 2, Image.LANCZOS)
-        img = self.transform(img)
-        img = rearrange(img, 'c h w -> (h w) c')
-
-        return rays, img
-
-    def _read_train_data(self):
-        """Fills self.rays and self.pixels arrays."""
-
-        for frame in tqdm(self.meta["frames"]):
-            camera_to_world = torch.FloatTensor(frame["transform_matrix"])[:3, :4]
-            image_path = os.path.join(self.path, f"{frame['file_path']}.png")
-            rays, img = self._get_rays_and_px_from_image(camera_to_world, image_path)
-            self._train_rays.append(rays) # h*w 6
-            self._train_pixels.append(img) # h*w 3
-
-        # frames_count h*w 6 -> ray_count 6
-        self._train_rays = torch.cat(self._train_rays, dim=0)
-        # frames_count h*w 3 -> ray_count 3
-        self._train_pixels = torch.cat(self._train_pixels, dim=0)
-
-    def _read_test_data(self):
-        """Fills self.rays and self.pixels arrays."""
-        self.test_num = len(self.meta["frames"])
-
-        split_name = self.path.split("/")[-1]
-        depth_index = {"lego": "0001",
-                       "chair": "0000",
-                       "drums": "0001",
-                       "ficus": "0136",
-                       "hotdog": "0029",
-                       "materials": "0000",
-                       "mic": "0186",
-                       "ship": "0002"}
-
-        frames = self.meta["frames"][::self.test_each]
-        for frame in tqdm(frames):
-            camera_to_world = torch.FloatTensor(frame["transform_matrix"])[:3, :4]
-            image_path = os.path.join(self.path, f"{frame['file_path']}.png")
-            rays, img = self._get_rays_and_px_from_image(camera_to_world, image_path)
-            self._test_rays.append(rays) # h*w 6
-            self._test_pixels.append(img) # h*w 3
-
-            depth_path = f"{frame['file_path']}_depth_{depth_index.get(split_name)}.png"
-            depth_image = Image.open(
-                os.path.join(self.path, depth_path)).resize(
-                    (self.image_size,) * 2, Image.LANCZOS)
-            depth_values = np.array(depth_image)[:, :, 0] # ~ 170 max value, looks like cm
-            depth_values = self.transform(depth_values)
-            depth_values = rearrange(depth_values, 'c h w -> (h w) c')
-            self._test_depth_values.append(depth_values) # h*w 1
-
-        self._test_rays = torch.cat(self._test_rays, dim=0) # 4 h*w 6 -> ray_count 6
-        self._test_pixels = torch.cat(self._test_pixels, dim=0) # 4 h*w 3 -> ray_count 3
-        self._test_depth_values = torch.cat(self._test_depth_values, dim=0) # 4 h*w 1 -> ray_count 1
-
-    def __getitem__(self, idx: int) -> dict:
-        """Extracts ray by index.
-
-        Parameters
-        ----------
-        idx:
-            Ray index.
-
-        Returns
-        -------
-        sample:
-            Ray and pixel value.
-            dict("ray": torch.tensor([6]),
-                 "pixel": torch.tensor(3]))
-        """
-
-        if self.split == "train":
-            return {"ray": self._train_rays[idx], "pixel": self._train_pixels[idx]}
-        if self.split == "test":
-            return {"ray": self._test_rays[idx], "gt_pixel": self._test_pixels[idx],
-                    "gt_depth": self._test_depth_values[idx]}
-        return None
-
-    def __len__(self) -> int:
-        """Defines number of rays in scene.
-
-        Returns
-        -------
-        len:
-            Number of rays.
-        """
-
-        if self.split == "train":
-            return self._train_rays.shape[0]
-        if self.split == "test":
-            return self._test_rays.shape[0]
-        return None
+        # return sample
