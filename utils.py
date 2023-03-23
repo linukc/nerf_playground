@@ -209,7 +209,7 @@ def calc_depth_metrics(pred_t, gt_t, masks):
     #print(masks.shape)
     batch_size = gt_t.size(0)
     scale, abs_diff, abs_rel, sq_rel, a_1, a_2, a_3 = 0, 0, 0, 0, 0, 0, 0
-    tqdm.write("[WARNING] Calculate depth metrics after scaling by gt_depth!")
+    #tqdm.write("[WARNING] Calculate depth metrics after scaling by gt_depth!")
 
     for pair in zip(pred_t, gt_t, masks):
         pred, grount_truth, one_mask = pair
@@ -222,7 +222,7 @@ def calc_depth_metrics(pred_t, gt_t, masks):
         scale += torch.median(valid_gt) / torch.median(valid_pred)
 
         #valid_pred *= scale
-        print("calc without scale for blender dataset")
+        #print("calc without scale for blender dataset")
         thresh = torch.max((valid_gt / valid_pred), (valid_pred / valid_gt))
         a_1 += (thresh < 1.25).float().mean()
         a_2 += (thresh < 1.25 ** 2).float().mean()

@@ -7,6 +7,10 @@ from os import makedirs, mkdir
 import torchvision as tvn
 import os 
 
+from torchmetrics.functional import structural_similarity_index_measure as ssim
+from torchmetrics.functional import peak_signal_noise_ratio as psnr
+from einops import rearrange
+
 import torch
 import hydra
 from loguru import logger
@@ -81,7 +85,7 @@ def eval_step(cfg, nerf_model, dataset, dataloader, step, exp_name):
             pred_depth.append(bundle['depth_map'].detach().cpu()) #
         
         pred_depth = torch.cat(pred_depth, dim=0).reshape(8, 400, 400)
-        path = osp(cfg.training.exp_folder, exp_name)
+        #path = osp(cfg.training.exp_folder, exp_name)
         # makedirs(os.path.join(path, "depth"), exist_ok=True)
         # with open(f"{path}/depth/depth_pred_value_{step}.npy", 'wb') as file:
         #     np.save(file, pred_depth.numpy())
@@ -105,9 +109,17 @@ def eval_step(cfg, nerf_model, dataset, dataloader, step, exp_name):
         # tvn.utils.save_image(tensor=gt_pixels.permute((2, 0, 1)),
         #                fp=f"{path}/depth/mask_{step}.png")
 
-        res = calc_depth_metrics(pred_depth, gt_depth, mask)
-        print(res)
-        
+        depth_metrics = calc_depth_metrics(pred_depth, gt_depth, mask)
+        #print(res)
+        wandb.log(depth_metrics)
+
+        viz_metrics = {"psnr": 0, "ssim": 0}
+        pred_pixels = rearrange(torch.cat(pred_pixels, dim=0),
+        '(num h w) c -> num c h w', h=400, w=400, c=3)
+        gt_pixels = gt_pixels.permute((0, 3, 1, 2))
+        viz_metrics["ssim"] = round(ssim(pred_pixels, gt_pixels).item(), 3)
+        viz_metrics["psnr"] = round(psnr(pred_pixels, gt_pixels).item(), 3)
+        wandb.log(viz_metrics)
         
         # analyze(gt_pixels, pred_pixels, gt_depth, pred_depth, pred_accmap,
         #     image_size=dataset.image_size, use_wandb=cfg.wandb.use,
