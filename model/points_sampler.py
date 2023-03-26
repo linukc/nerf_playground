@@ -47,6 +47,8 @@ class IntervalSampler(torch.nn.Module):
                                          requires_grad=False, dtype=torch.float32)[None, :]
         self.register_buffer("point_intervals", point_intervals, persistent=False)
 
+        print(f"init with {self.num_samples}")
+
     def forward(self, ray_count: int):
         """
         Parameters

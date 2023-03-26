@@ -42,6 +42,10 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
         if cfg.model.hierarchical_sampler.use:
             self.hsampler = HierarchicalPDFSampler(cfg.model.hierarchical_sampler.num_fine_samples,
                                                    cfg.model.hierarchical_sampler.perturb)
+        else:
+            fine_IS_cfg = cfg.model.interval_sampler
+            fine_IS_cfg["num_samples_coarse"] = cfg.model.hierarchical_sampler.num_fine_samples
+            self.fine_IS = IntervalSampler(**fine_IS_cfg)
         self.volume_renderer = VolumeRenderer(**cfg.model.volume_renderer)
 
         self.cfg = cfg
@@ -77,6 +81,8 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
                 if self.cfg.model.hierarchical_sampler.use:
                     ray_depth_values = self.hsampler(ray_depth_values,
                                                      coarse_bundle['weights']) #pylint: disable=unsubscriptable-object
+                else:
+                    ray_depth_values = self.fine_IS(ray_count=num_rays)
             # [num_rays, self.num_coarse_samples]
             ray_points = intervals_to_ray_points(
                 point_intervals=ray_depth_values, ray_origins=ray_origins, ray_directions=ray_dirs)
@@ -89,14 +95,20 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
                 viewdirs = self.viewdir_encoding(viewdirs)
 
             if renderer == "coarse":
-                coarse_radiance = self.mlp_coarse(xyz=ray_points, viewdirs=viewdirs)
+                if self.cfg.model.mlp.add_view_dependency:
+                    coarse_radiance = self.mlp_coarse(xyz=ray_points, viewdirs=viewdirs)
+                else:
+                    coarse_radiance = self.mlp_coarse(xyz=ray_points)
                 coarse_bundle = self.volume_renderer(
                     radiance_field=coarse_radiance,
                     depth_values=ray_depth_values,
                     ray_directions=ray_dirs)
 
             elif renderer == "fine":
-                fine_radiance = self.mlp_fine(xyz=ray_points, viewdirs=viewdirs)
+                if self.cfg.model.mlp.add_view_dependency:
+                    fine_radiance = self.mlp_fine(xyz=ray_points, viewdirs=viewdirs)
+                else:
+                    fine_radiance = self.mlp_fine(xyz=ray_points)
                 fine_bundle = self.volume_renderer(
                     radiance_field=fine_radiance,
                     depth_values=ray_depth_values,
@@ -187,5 +199,5 @@ class NeRFModel(nn.Module): #pylint: disable=too-many-instance-attributes
 
     def _forward_sigma(self, points):
         if self.cfg.model.use_fine_mlp:
-            return self.mlp_fine(xyz=self.coords_encoding(points))
-        return self.mlp_coarse(xyz=self.coords_encoding(points))
+            return self.mlp_fine(xyz=self.coords_encoding(points), return_sigma=True)[:, -1]
+        return self.mlp_coarse(xyz=self.coords_encoding(points), return_sigma=True)[:, -1]

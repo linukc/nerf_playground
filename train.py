@@ -196,12 +196,14 @@ def run_experiment(cfg: DictConfig) -> None: #pylint: disable=too-many-statement
                            "f+b_per_step(ms)": elapsed_time,
                            "step": step})
 
-            if step % cfg.training.eval_each == 0:
+            #typical each N step and additional val at the begining (largest slope in metrics)
+            if (step % cfg.training.eval_each == 0) or ( (step < 5_000) and (step % 250 == 0)) or (step in range(50, 1051, 100)):
                 nerf_model.eval()
                 nerf_model.volume_renderer.mode = "test"
                 eval_step(cfg, nerf_model, test_dataset, test_dataloader, step, exp_name)
                 nerf_model.train()
                 nerf_model.volume_renderer.mode = "training"
+            
 
             step += 1
             if step > cfg.training.num_iterations:

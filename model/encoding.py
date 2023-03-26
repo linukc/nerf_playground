@@ -30,6 +30,8 @@ class HighFreqEncoding(torch.nn.Module):
         if len(in_feat.shape) == 3:
             n_rays, n_points, _ = in_feat.shape
             input_features = rearrange(in_feat, "r p f -> (r p) f")
+        else:
+            input_features = in_feat.clone()
 
         encoded_features = input_features.unsqueeze(-1) * self.encod_coeff
         encoded_features[:, :, 0::2] = torch.sin(encoded_features[:, :, 0::2])

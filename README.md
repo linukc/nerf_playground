@@ -1,6 +1,9 @@
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/094f9d7eaabc4e07b03ed8de0526862d)](https://www.codacy.com/gh/linukc/nerf_playground/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=linukc/nerf_playground&amp;utm_campaign=Badge_Grade)
 
 To do:
+- все должно быть в одном вандб лог, если я хочу строить один график от другого
+- fix - when you rename runs in wandb after for example for graphics you lost track to local folder with logs (he continues to be called by the old name like glowing enigma)
+- add config as not a decorator, but an argument
 - rewrite dataset duplication
 - rewrite analyze - func should be independent and out of context of specific dataset 
 - implement correct savings https://discuss.pytorch.org/t/loading-optimizer-dict-starts-training-from-initial-lr/36328 (+shed + optim)

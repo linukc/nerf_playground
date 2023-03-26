@@ -66,7 +66,7 @@ class NeRFMLP(nn.Module):
                 torch.nn.ReLU(),
                 torch.nn.Linear(base_features_size // 2, 3))
 
-    def forward(self, xyz: torch.Tensor, viewdirs: torch.Tensor=None):
+    def forward(self, xyz: torch.Tensor, viewdirs: torch.Tensor=None, return_sigma=False):
         """MLP forward propogation function.
 
         Parameters
@@ -93,6 +93,8 @@ class NeRFMLP(nn.Module):
             xyz = layer(xyz)
 
         density = self.density(xyz)
+        if return_sigma:
+            return density # for eval step and mesh constraction based on coord, (view agnostic)
         xyz = self.dense_mlp(xyz)
         if viewdirs is not None:
             color = self.color(torch.cat((xyz, viewdirs), dim=-1))
