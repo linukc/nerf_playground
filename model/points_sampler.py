@@ -1,4 +1,4 @@
-"""Class to sample points along the ray"""
+""" Sampling points along the ray. """
 
 import torch
 
@@ -6,11 +6,12 @@ import torch
 def intervals_to_ray_points(point_intervals: torch.Tensor,
                             ray_directions: torch.Tensor,
                             ray_origins: torch.Tensor):
-    """ Based on ray position('ray_origins') and noraml orientation('ray_directions')
-        and intervals('point_intervals'), calculate each point on the ray.
+    """
+    Based on ray position('ray_origins') and noraml orientation('ray_directions')
+    and intervals('point_intervals'), calculate each point on the ray.
 
-    Parameters
-    ----------
+    Arguments
+    ---------
         point_intervals: torch.tensor(ray_count, num_samples)
         ray_directions: torch.tensor(ray_count, 3)
         ray_origin: torch.tensor(ray_count, 3)
@@ -28,15 +29,15 @@ def intervals_to_ray_points(point_intervals: torch.Tensor,
     return ray_points
 
 class IntervalSampler(torch.nn.Module):
-    """Class to define intervals between samples (points) on the ray."""
+    """ Class to define intervals between samples (points) on the ray. """
 
     #pylint: disable=too-many-arguments
-    def __init__(self, num_samples_coarse: int, perturb: bool, lindisp: bool,
+    def __init__(self, num_samples: int, perturb: bool, lindisp: bool,
         near_bound:int, far_bound: int):
 
         super().__init__()
 
-        self.num_samples = num_samples_coarse
+        self.num_samples = num_samples
         self.perturb = perturb
         self.lindisp = lindisp
         self.near = near_bound
@@ -47,12 +48,10 @@ class IntervalSampler(torch.nn.Module):
                                          requires_grad=False, dtype=torch.float32)[None, :]
         self.register_buffer("point_intervals", point_intervals, persistent=False)
 
-        print(f"init with {self.num_samples}")
-
     def forward(self, ray_count: int):
         """
-        Parameters
-        ----------
+        Arguments
+        ---------
         ray_count: int
             Number of rays (batch_size).
 
@@ -90,15 +89,21 @@ class IntervalSampler(torch.nn.Module):
         return point_intervals
 
 class HierarchicalPDFSampler(torch.nn.Module):
-    """Module that perform Hierarchical sampling (section 5.2)
-    Args:
-        num_fine_samples (int): Number of depth samples per ray for the fine network.
+    """
+    Module that perform Hierarchical sampling (section 5.2).
+
+    Arguments
+    ---------
+    num_fine_samples:
+        Number of depth samples per ray for the fine network.
+    perturb:
+        Add or not random offsets.
     """
 
-    def __init__(self, num_fine_samples: int, perturb: bool):
+    def __init__(self, num_samples: int, perturb: bool):
         super().__init__()
 
-        self.num_fine_samples = num_fine_samples
+        self.num_fine_samples = num_samples
         self.perturb = perturb
         uniform_x = torch.linspace(0.0, 1.0, steps=self.num_fine_samples,
             requires_grad = False, dtype=torch.float32)
@@ -106,17 +111,21 @@ class HierarchicalPDFSampler(torch.nn.Module):
 
     def forward(self, depth_rays_values_coarse, coarse_weights):
         """
-            Inputs:
-                depth_rays_values_coarse: (ray_count, num_coarse_samples])
-                    Depth values of each sampled point along the ray.
-                coarse_weights: (ray_count, num_coarse_samples])
-                    Weights assigned to each sampled color of sampled point along the ray.
-                perturb:
-                    (bool) if True, perform stratified sampling, otherwise perform uniform sampling.
-            Outputs:
-                depth_values_fine: (ray_count, num_coarse_samples + num_fine_samples)
-                    Depths of the hierarchical sampled points along the ray.
+        Arguments
+        ---------
+            depth_rays_values_coarse: (ray_count, num_coarse_samples])
+                Depth values of each sampled point along the ray.
+            coarse_weights: (ray_count, num_coarse_samples])
+                Weights assigned to each sampled color of sampled point along the ray.
+            perturb:
+                (bool) if True, perform stratified sampling, otherwise perform uniform sampling.
+        
+        Returns
+        -------
+            depth_values_fine: (ray_count, num_coarse_samples + num_fine_samples)
+                Depths of the hierarchical sampled points along the ray.
         """
+
         points_on_rays_mid = 0.5 * (depth_rays_values_coarse[..., 1:] + \
             depth_rays_values_coarse[..., :-1])
         interval_samples = self.sample_pdf(points_on_rays_mid,
@@ -131,9 +140,12 @@ class HierarchicalPDFSampler(torch.nn.Module):
 
     #pylint: disable=too-many-locals
     def sample_pdf(self, bins, weights, uniform_x, perturb):
-        """Hierarchical sampling (section 5.2) for fine sampling
-            implementation by yenchenlin (https://github.com/yenchenlin/nerf-pytorch).
-        Inputs:
+        """
+        Hierarchical sampling (section 5.2) for fine sampling,
+        implementation by yenchenlin (https://github.com/yenchenlin/nerf-pytorch).
+        
+        Arguments
+        ---------
             bins: [ray_count, num_coarse_samples - 1]
                 Points_on_rays_mid.
             weights: [ray_count, num_coarse_samples - 2]
@@ -143,17 +155,19 @@ class HierarchicalPDFSampler(torch.nn.Module):
                 evenly spaced from 0 to 1, inclusive.
             perturb: (bool)
                 if True, perform stratified sampling, otherwise perform uniform sampling.
-        Outputs:
+
+        Returns
+        -------
             samples: [ray_count, num_coarse_samples + num_fine_samples]
                 Depths of the hierarchical sampled points along the ray.
         """
 
         weights = weights + 1e-5
-        pdf = weights / torch.sum(weights, dim=-1, keepdim=True)  # [ray_count, num_coarse_sample-2]
+        pdf = weights / torch.sum(weights, dim=-1, keepdim=True) # [ray_count, num_coarse_sample-2]
         cdf = torch.cumsum(pdf, dim=-1)
         cdf = torch.cat(
             [torch.zeros_like(cdf[..., :1]), cdf], dim=-1
-        )  # [ray_count, num_coarse_sample-1] = [ray_count, len(bins)]
+        ) # [ray_count, num_coarse_sample-1] = [ray_count, len(bins)]
 
         # Take uniform samples
         if not perturb:  # cdf.shape[:-1] get cdf shape exclude last one

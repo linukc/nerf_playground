@@ -3,12 +3,20 @@
 .pre-commit-config.yaml
 wandb/
 venv/
+
 # python
 *__pycache__*
+
+# hydra logging
+multirun/
+output/
+
 # custom
 eval/
 checkpoints/
 experiments/
-# hydra logging
-multirun/
-output/
+
+configs/*
+!configs/train.yaml
+!configs/dataset/
+!configs/dataset/*.yaml

@@ -11,3 +11,5 @@ torchmetrics
 lpips
 loguru
 matplotlib
+opencv-python
+GitPython
