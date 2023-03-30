@@ -1,5 +1,7 @@
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/094f9d7eaabc4e07b03ed8de0526862d)](https://www.codacy.com/gh/linukc/nerf_playground/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=linukc/nerf_playground&amp;utm_campaign=Badge_Grade)
 
+My experiments with basic NeRF. Depth metrics make sense only at the few thousand iterations, after they will be almost constant. You can find results [here](https://wandb.ai/linukc/65_conference?workspace=user-linukc).
+
 Run:
 ```python
 python3 -m venv venv  
